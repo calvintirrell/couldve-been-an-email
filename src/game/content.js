@@ -92,6 +92,34 @@ export const FILLER = {
   ],
 };
 
+// Bad news delivered right as a nod prompt appears. Nodding here is a disaster.
+export const BAD_NEWS = [
+  "Quick heads up: we're doing a small reorg. Nothing to worry about.",
+  "Unfortunately, we did not hit the Q2 targets.",
+  "We've decided to sunset the project some of you have been working on.",
+  "Budget freeze effective immediately. Travel, tools, snacks — all of it.",
+  "We're saying goodbye to a few colleagues today. They were great.",
+];
+
+// Plausible-but-wrong called-on answers (the right one echoes the transcript).
+export const WRONG_ANSWERS = [
+  "Yes — this ties back to the hiring freeze discussion.",
+  "I think the real issue is the vendor contract.",
+  "We should loop in legal before committing to that.",
+  "Honestly, the roadmap answers this for us.",
+  "Strong +1 to the budget realignment point.",
+  "I'd push back gently — the Q2 numbers say otherwise.",
+];
+
+// What your options look like when you weren't reading the transcript.
+export const GARBLED_OPTIONS = [
+  "…yes, totally, the synergies?",
+  "…the dashboard… thing?",
+  "strong agree with… what was said",
+  "…circle back? to it?",
+  "…numbers. the numbers one",
+];
+
 // What the transcript degrades into when Focus hits zero.
 export const GARBLE = [
   "something something Q3 something synergy",

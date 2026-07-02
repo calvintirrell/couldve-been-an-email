@@ -110,4 +110,38 @@ describe("live meeting", () => {
     tick(300_000); // 2100 game-seconds
     expect(screen.getByText("this meeting should have ended")).toBeInTheDocument();
   });
+
+  it("a nod prompt appears and nodding resolves it", () => {
+    join();
+    tick(9500); // first nod prompt spawns at 60 game-seconds (~8.6 real s)
+    expect(screen.getByText(/seems to expect acknowledgment/)).toBeInTheDocument();
+    const visBefore = stat("Visibility");
+    fireEvent.click(screen.getByRole("button", { name: "👍 Nod" }));
+    expect(screen.queryByText(/seems to expect acknowledgment/)).not.toBeInTheDocument();
+    expect(stat("Visibility")).toBeGreaterThan(visBefore);
+  });
+
+  it("eventually you get called on, and responding closes the modal", () => {
+    join();
+    let found = false;
+    for (let i = 0; i < 600 && !found; i++) {
+      tick(250);
+      found = !!screen.queryByText(/You've been called on/);
+    }
+    expect(found).toBe(true);
+    fireEvent.click(screen.getByRole("button", { name: /"Good point."/ }));
+    expect(screen.queryByText(/You've been called on/)).not.toBeInTheDocument();
+    expect(screen.getByText(/Nobody can prove it wasn't/)).toBeInTheDocument();
+  });
+
+  it("special moves land in the transcript and lock out", () => {
+    join();
+    tick(1000);
+    fireEvent.click(screen.getByRole("button", { name: /take this offline/ }));
+    expect(screen.getByText(/The tangent dies instantly/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /take this offline/ })).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: /hard stop at :30/ }));
+    expect(screen.getByText(/somewhere better to be/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /hard stop at :30/ })).toBeDisabled();
+  });
 });

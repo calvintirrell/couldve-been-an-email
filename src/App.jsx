@@ -4,10 +4,20 @@ import {
   createGame,
   tick,
   toggleCamera,
+  nod,
+  answerQuiz,
+  goodPoint,
+  breakingUp,
+  takeOffline,
+  hardStop,
+  onCooldown,
+  cooldownLeftReal,
   fmtClock,
   visibilityZone,
   clamp,
   SCHEDULED_END,
+  NOD_WINDOW,
+  QUIZ_WINDOW,
 } from "./game/engine.js";
 
 const TICK_MS = 250;
@@ -28,6 +38,15 @@ function FocusBar({ value }) {
         className="h-full rounded-full transition-all duration-300"
         style={{ width: `${clamp(value, 0, 100)}%`, background: value < 25 ? "#E03131" : "#4DABF7" }}
       />
+    </div>
+  );
+}
+
+function PromptTimer({ expiresAt, now, window }) {
+  const pct = clamp(((expiresAt - now) / window) * 100, 0, 100);
+  return (
+    <div className="h-1.5 w-full rounded-full bg-black/40 overflow-hidden mt-2">
+      <div className="h-full rounded-full bg-amber-400 transition-all duration-200" style={{ width: `${pct}%` }} />
     </div>
   );
 }
@@ -175,18 +194,40 @@ export default function App() {
               {g.transcript.length === 0 && (
                 <div className="text-sm text-gray-400 italic">Waiting for the host to start the meeting…</div>
               )}
-              {g.transcript.map((l) => (
-                <div key={l.id} className="text-sm leading-snug">
-                  <span className="font-semibold mr-2" style={{ color: CAST[l.speakerId].color }}>
-                    {CAST[l.speakerId].name}
-                  </span>
-                  <span className={l.muted || l.garbled ? "italic text-gray-500" : "text-gray-200"}>{l.text}</span>
-                </div>
-              ))}
+              {g.transcript.map((l) =>
+                l.speakerId === "sys" ? (
+                  <div key={l.id} className="text-xs text-center italic text-gray-500 py-0.5">
+                    {l.text}
+                  </div>
+                ) : (
+                  <div key={l.id} className="text-sm leading-snug">
+                    <span className="font-semibold mr-2" style={{ color: CAST[l.speakerId].color }}>
+                      {CAST[l.speakerId].name}
+                    </span>
+                    <span className={l.muted || l.garbled ? "italic text-gray-500" : "text-gray-200"}>{l.text}</span>
+                  </div>
+                )
+              )}
             </div>
             {checkedOut && (
               <div className="text-xs text-red-400 mt-1.5">
                 You are fully checked out. If someone calls on you right now, you're cooked.
+              </div>
+            )}
+            {g.prompt?.type === "nod" && (
+              <div className="mt-2 bg-amber-950/60 border border-amber-700 rounded-xl p-3 flex items-center gap-3">
+                <div className="flex-1 min-w-0">
+                  <div className="text-sm font-semibold text-amber-200">
+                    {CAST[g.prompt.speakerId].name} seems to expect acknowledgment.
+                  </div>
+                  <PromptTimer expiresAt={g.prompt.expiresAt} now={g.gameSeconds} window={NOD_WINDOW} />
+                </div>
+                <button
+                  onClick={() => setG(nod)}
+                  className="shrink-0 px-4 py-2 rounded-lg bg-amber-500 text-gray-950 text-sm font-bold transition-transform active:scale-95"
+                >
+                  👍 Nod
+                </button>
               </div>
             )}
           </div>
@@ -222,6 +263,33 @@ export default function App() {
               </div>
             </div>
 
+            <div className="bg-gray-950/60 rounded-xl border border-gray-800 p-4">
+              <div className="text-sm font-medium text-gray-400 mb-2">Special moves</div>
+              <div className="space-y-2">
+                <button
+                  onClick={() => setG(takeOffline)}
+                  disabled={onCooldown(g, "offline")}
+                  className="w-full text-left rounded-lg border border-gray-700 p-2.5 text-sm transition-all hover:border-gray-500 disabled:opacity-40 disabled:cursor-not-allowed active:scale-[0.98]"
+                >
+                  <div className="font-semibold">
+                    "Let's take this offline"
+                    {onCooldown(g, "offline") && (
+                      <span className="font-mono text-xs text-gray-500 ml-2">{cooldownLeftReal(g, "offline")}s</span>
+                    )}
+                  </div>
+                  <div className="text-xs text-gray-500">Kills the tangent. −3:00 off the clock. Everyone perceives you.</div>
+                </button>
+                <button
+                  onClick={() => setG(hardStop)}
+                  disabled={g.hardStopUsed}
+                  className="w-full text-left rounded-lg border border-gray-700 p-2.5 text-sm transition-all hover:border-gray-500 disabled:opacity-40 disabled:cursor-not-allowed active:scale-[0.98]"
+                >
+                  <div className="font-semibold">"I have a hard stop at :30" {g.hardStopUsed && <span className="text-xs text-gray-500">used</span>}</div>
+                  <div className="text-xs text-gray-500">Once per meeting. The clock can no longer pass 30:00. Everyone judges you.</div>
+                </button>
+              </div>
+            </div>
+
             <button
               onClick={() => setG(toggleCamera)}
               className={`w-full py-2.5 rounded-lg text-sm font-semibold transition-transform active:scale-95 border ${
@@ -245,6 +313,52 @@ export default function App() {
           </div>
         </div>
       </div>
+
+      {/* Called-on quiz modal */}
+      {g.prompt?.type === "quiz" && (
+        <div className="fixed inset-0 z-40 bg-black/70 flex items-center justify-center p-4">
+          <div className="bg-gray-900 border border-gray-700 rounded-2xl max-w-md w-full p-6 shadow-2xl">
+            <div className="text-xs font-semibold uppercase tracking-widest text-amber-400 mb-2">
+              🎤 You've been called on
+            </div>
+            <p className="font-semibold mb-1">Karen: "I'd love your take here. Thoughts?"</p>
+            <p className="text-xs text-gray-500 mb-2">
+              {g.prompt.garbled
+                ? "You have no idea what was just said. These options are guesses."
+                : "It was about something in the last 30 seconds. Hopefully you were reading."}
+            </p>
+            <PromptTimer expiresAt={g.prompt.expiresAt} now={g.gameSeconds} window={QUIZ_WINDOW} />
+            <div className="space-y-2 mt-4">
+              {g.prompt.options.map((o, i) => (
+                <button
+                  key={i}
+                  onClick={() => setG((s) => answerQuiz(s, i))}
+                  className="w-full text-left py-2.5 px-3 rounded-lg border border-gray-600 text-sm font-medium hover:border-gray-400 transition-all active:scale-[0.98]"
+                >
+                  {o.text}
+                </button>
+              ))}
+            </div>
+            <div className="flex gap-2 mt-3 pt-3 border-t border-gray-800">
+              <button
+                onClick={() => setG(goodPoint)}
+                disabled={onCooldown(g, "goodPoint")}
+                className="flex-1 py-2 rounded-lg bg-gray-800 border border-gray-700 text-xs font-semibold disabled:opacity-40 transition-transform active:scale-95"
+              >
+                "Good point."
+                {onCooldown(g, "goodPoint") && <span className="font-mono text-gray-500 ml-1">{cooldownLeftReal(g, "goodPoint")}s</span>}
+              </button>
+              <button
+                onClick={() => setG(breakingUp)}
+                disabled={g.breakingUpUses >= 2 || onCooldown(g, "breakingUp")}
+                className="flex-1 py-2 rounded-lg bg-gray-800 border border-gray-700 text-xs font-semibold disabled:opacity-40 transition-transform active:scale-95"
+              >
+                {g.breakingUpUses >= 2 ? "Your connection seems fine." : `"You're breaking up…" (${2 - g.breakingUpUses} left)`}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
