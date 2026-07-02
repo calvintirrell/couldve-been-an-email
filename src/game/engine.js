@@ -1,4 +1,16 @@
-import { BEATS, ANCHORS, FILLER, GARBLE, BAD_NEWS, WRONG_ANSWERS, GARBLED_OPTIONS } from "./content.js";
+import {
+  BEATS,
+  ANCHORS,
+  FILLER,
+  GARBLE,
+  BAD_NEWS,
+  WRONG_ANSWERS,
+  GARBLED_OPTIONS,
+  QUICK_QUESTIONS,
+  ONE_MORE_THINGS,
+  HOT_POTATO_OPENERS,
+  CAST,
+} from "./content.js";
 
 export const SPEED = 7; // game-seconds per real second (~30-min meeting ≈ 4.5 real minutes)
 export const SCHEDULED_END = 30 * 60; // game-seconds
@@ -6,6 +18,7 @@ export const MAX_TRANSCRIPT = 60;
 export const NOD_WINDOW = 24.5; // 3.5 real seconds
 export const QUIZ_WINDOW = 42; // 6 real seconds
 export const BAIT_CHANCE = 0.2;
+export const TENSION_FILL = 100 / 56; // standoff tension per game-second (~8 real seconds)
 
 // Per game-second rates. Tuned for tension in Phase 6.
 export const RATES = {
@@ -53,15 +66,34 @@ export function createGame() {
     nextLineAt: 0,
     anchorIdx: 0,
     nextId: 1,
-    prompt: null, // {type:'nod'|'quiz', ...}
+    prompt: null, // {type:'nod'|'quiz'|'standoff', ...}
     nextNodAt: 60,
     nextQuizAt: 240,
+    nextExtensionAt: 330,
+    nextStandoffAt: 420,
+    dianeStrikes: 0,
+    resentment: {}, // coworkerId -> level; they remember deflections
+    muteAssigned: false,
+    offStreak: 0, // consecutive game-seconds with camera off
+    lastExtension: null, // {amount, at, by} — drives the +4:00 flash
     cooldowns: {},
     breakingUpUses: 0,
     hardStopUsed: false,
     calmUntil: 0, // "take this offline" suppresses tangent drain until here
     flags: {}, // incoherent, etc — endings wired in Phase 5
-    stats: { nods: 0, badNods: 0, words: 0, quizRight: 0, quizWrong: 0, quizMeh: 0 },
+    stats: {
+      nods: 0,
+      badNods: 0,
+      words: 0,
+      quizRight: 0,
+      quizWrong: 0,
+      quizMeh: 0,
+      minutesAdded: 0,
+      itemsDodged: 0,
+      volunteered: 0,
+      deflections: 0,
+      extensionsBlocked: 0,
+    },
   };
 }
 
@@ -103,6 +135,37 @@ function emitLine(s, rand) {
   if (garbled) text = pick(GARBLE, rand);
   pushLine(s, { speakerId, text, muted, garbled });
   s.nextLineAt = s.gameSeconds + 8 + rand() * 8;
+  // Dave giving "context" quietly costs everyone two minutes
+  if (anchor && speakerId === "rambler") extend(s, 120, "rambler");
+}
+
+// ---------- THE CLOCK IS A LIAR ----------
+
+function extend(s, amount, by) {
+  if (s.hardStopUsed) {
+    s.stats.extensionsBlocked += 1;
+    sys(s, `${CAST[by].name} starts to add time. You have a hard stop. The time is not added.`);
+    return;
+  }
+  s.meetingEnd += amount;
+  s.stats.minutesAdded += amount / 60;
+  s.lastExtension = { amount, at: s.gameSeconds, by };
+}
+
+function maybeExtend(s, rand) {
+  // Diane strikes exclusively as the meeting is about to end
+  if (s.dianeStrikes < 2 && s.gameSeconds > 900 && s.meetingEnd - s.gameSeconds < 50) {
+    s.dianeStrikes += 1;
+    pushLine(s, { speakerId: "diane", text: pick(ONE_MORE_THINGS, rand), muted: false, garbled: false });
+    extend(s, 360, "diane");
+    return;
+  }
+  if (s.gameSeconds >= s.nextExtensionAt && s.gameSeconds < s.meetingEnd - 120) {
+    const by = pick(["greg", "brad", "rambler"], rand);
+    pushLine(s, { speakerId: by, text: pick(QUICK_QUESTIONS, rand), muted: false, garbled: s.focus <= 0 });
+    extend(s, 240, by);
+    s.nextExtensionAt = s.gameSeconds + 300 + rand() * 180;
+  }
 }
 
 // ---------- PROMPTS ----------
@@ -171,6 +234,90 @@ function expirePrompt(s) {
   s.prompt = null;
 }
 
+// ---------- HOT POTATO ----------
+
+const STANDOFF_POOL = ["brad", "greg", "rambler", "diane"];
+
+function spawnStandoff(s, rand) {
+  pushLine(s, { speakerId: "boss", text: pick(HOT_POTATO_OPENERS, rand), muted: false, garbled: false });
+  const pool = [...STANDOFF_POOL];
+  const count = 2 + (rand() < 0.5 ? 1 : 0);
+  const participants = [];
+  for (let i = 0; i < count; i++) {
+    participants.push(pool.splice(Math.floor(rand() * pool.length) % pool.length, 1)[0]);
+  }
+  const coworkerPulls = {};
+  for (const id of participants) coworkerPulls[id] = 25 + rand() * 40;
+  s.prompt = {
+    type: "standoff",
+    participants,
+    coworkerPulls,
+    yourPull: s.visibility + (s.hardStopUsed ? 10 : 0), // hard stop: "you'll own the deck, right?"
+    tension: 0,
+    coughUsed: false,
+    deflectedBack: [],
+  };
+  s.nextStandoffAt = s.gameSeconds + 350 + rand() * 150;
+}
+
+function assignToYou(s) {
+  s.actionItems += 1;
+  s.prompt = null;
+  sys(s, "'Great — you'll own it,' Karen says. It's in the notes. It's official.");
+}
+
+function coworkerTakesIt(s, id, crackLine) {
+  s.stats.itemsDodged += 1;
+  s.prompt = null;
+  sys(s, crackLine);
+}
+
+function tickStandoff(s, dt, rand) {
+  const p = { ...s.prompt, deflectedBack: [...s.prompt.deflectedBack], coworkerPulls: { ...s.prompt.coworkerPulls } };
+  s.prompt = p;
+  p.tension = Math.min(100, p.tension + TENSION_FILL * dt);
+  for (const id of p.participants) {
+    const resent = s.resentment[id] || 0;
+    if (resent > 0) {
+      // resentful coworkers don't crack — they deflect back at you
+      if (!p.deflectedBack.includes(id) && rand() < 0.004 * dt) {
+        p.deflectedBack.push(id);
+        p.yourPull += 15;
+        sys(s, `${CAST[id].name}: "I feel like this is really your wheelhouse." They remember.`);
+      }
+    } else if (rand() < 0.0025 * dt) {
+      coworkerTakesIt(s, id, `${CAST[id].name} breaks. "…I can take a first pass." They look dead inside.`);
+      return;
+    }
+  }
+  if (s.prompt && p.tension >= 100) {
+    const maxCoworker = Math.max(...p.participants.map((id) => p.coworkerPulls[id]));
+    if (p.yourPull >= maxCoworker) {
+      assignToYou(s);
+      sys(s, "Nobody cracked. Karen picked the most visible person. That was you.");
+    } else {
+      const victim = p.participants.find((id) => p.coworkerPulls[id] === maxCoworker);
+      coworkerTakesIt(s, victim, `"${CAST[victim].name}, you've been really engaged — you own it," Karen says.`);
+    }
+  }
+}
+
+// One horrifying event: assigned an action item while your camera is off.
+function maybeMuteAssign(s, dt, rand) {
+  if (s.muteAssigned || s.cameraOn || s.offStreak < 60 || s.gameSeconds < 600) return;
+  if (rand() < 0.0035 * dt) {
+    s.muteAssigned = true;
+    s.actionItems += 1;
+    pushLine(s, {
+      speakerId: "boss",
+      text: "…and let's have you own the follow-ups. Perfect, thanks for volunteering. Moving on.",
+      muted: false,
+      garbled: false,
+    });
+    sys(s, "You were assigned an action item while your camera was off. You couldn't even object.");
+  }
+}
+
 // ---------- TICK ----------
 
 export function tick(s, dtReal, rand = Math.random) {
@@ -182,15 +329,22 @@ export function tick(s, dtReal, rand = Math.random) {
   if (n.cameraOn) {
     n.focus = clamp(n.focus - RATES.focusDrainOn * drainMult * dt, 0, 100);
     n.visibility = clamp(n.visibility - RATES.visDriftOn * dt, 0, 100);
+    n.offStreak = 0;
   } else {
     n.focus = clamp(n.focus + RATES.focusRegenOff * dt, 0, 100);
     n.visibility = clamp(n.visibility - RATES.visDecayOff * dt, 0, 100);
+    n.offStreak = s.offStreak + dt;
   }
+  n.stats = { ...n.stats };
   if (n.gameSeconds >= n.nextLineAt) emitLine(n, rand);
+  maybeExtend(n, rand);
+  maybeMuteAssign(n, dt, rand);
+  if (n.prompt?.type === "standoff") tickStandoff(n, dt, rand);
   if (n.prompt && n.gameSeconds >= n.prompt.expiresAt) expirePrompt(n);
   if (!n.prompt && n.gameSeconds >= 30) {
     if (n.gameSeconds >= n.nextNodAt) spawnNod(n, rand);
     else if (n.gameSeconds >= n.nextQuizAt) spawnQuiz(n, rand);
+    else if (n.gameSeconds >= n.nextStandoffAt && n.gameSeconds >= 300) spawnStandoff(n, rand);
   }
   return n;
 }
@@ -281,5 +435,46 @@ export function hardStop(s) {
   n.visibility = clamp(n.visibility + 18, 0, 100);
   n.stats.words += 7;
   sys(n, "'I have a hard stop at :30.' Noted. Everyone now knows you have somewhere better to be.");
+  return n;
+}
+
+// ---------- STANDOFF ACTIONS ----------
+
+export function fakeCough(s) {
+  if (s.prompt?.type !== "standoff" || s.prompt.coughUsed) return s;
+  const n = { ...s, prompt: { ...s.prompt } };
+  n.prompt.coughUsed = true;
+  n.prompt.yourPull -= 12;
+  sys(n, "You cough. Convincingly ill. Ownership feels like less of a fit for you now.");
+  return n;
+}
+
+export function deflect(s, targetId, rand = Math.random) {
+  if (s.prompt?.type !== "standoff" || !s.prompt.participants.includes(targetId)) return s;
+  const n = { ...s, stats: { ...s.stats }, resentment: { ...s.resentment }, prompt: { ...s.prompt } };
+  const priorResentment = n.resentment[targetId] || 0;
+  n.resentment[targetId] = priorResentment + 1;
+  n.stats.deflections += 1;
+  n.stats.words += 8;
+  if (rand() < 0.7 - priorResentment * 0.2) {
+    n.stats.itemsDodged += 1;
+    n.prompt = null;
+    sys(n, `"${CAST[targetId].name} is really close to this one," you say. They sigh. "…Sure. I'll take it." They will remember this.`);
+  } else {
+    n.prompt.yourPull += 18;
+    n.prompt.tension = Math.min(100, n.prompt.tension + 20);
+    sys(n, `"Actually, I think that's more your area," ${CAST[targetId].name} says, instantly. Everyone nods.`);
+  }
+  return n;
+}
+
+export function volunteer(s) {
+  if (s.prompt?.type !== "standoff") return s;
+  const n = { ...s, stats: { ...s.stats }, prompt: null };
+  n.actionItems += 1;
+  n.stats.volunteered += 1;
+  n.stats.words += 3;
+  n.visibility = 50; // the big cushion: comfortably mid for a while
+  sys(n, "'I'll own it.' Karen beams. You are, briefly, beyond reproach.");
   return n;
 }

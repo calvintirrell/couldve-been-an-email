@@ -120,6 +120,28 @@ export const GARBLED_OPTIONS = [
   "…numbers. the numbers one",
 ];
 
+// "Quick question" — adds 4 minutes, always.
+export const QUICK_QUESTIONS = [
+  "Sorry — quick question before we move on. It's about the logo.",
+  "Wait, quick question: does this affect the offsite?",
+  "Quick question, might be a dumb one — what's our actual goal here?",
+  "Super quick question. Well, two questions. Maybe three.",
+];
+
+// Diane's signature move — lands as people are saying goodbye. +6 minutes.
+export const ONE_MORE_THINGS = [
+  "Oh — one more thing before everyone drops. Small one.",
+  "Sorry, this will take literally one second. So. Three things:",
+  "Wait wait wait — before we go. It's about the shared drive.",
+];
+
+// The boss opens a hot potato standoff.
+export const HOT_POTATO_OPENERS = [
+  "So — we need someone to own this.",
+  "This feels like it needs a single owner. Any volunteers?",
+  "Someone should take this offline and drive it. Who wants it?",
+];
+
 // What the transcript degrades into when Focus hits zero.
 export const GARBLE = [
   "something something Q3 something synergy",

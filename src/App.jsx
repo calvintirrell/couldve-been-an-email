@@ -10,6 +10,9 @@ import {
   breakingUp,
   takeOffline,
   hardStop,
+  fakeCough,
+  deflect,
+  volunteer,
   onCooldown,
   cooldownLeftReal,
   fmtClock,
@@ -140,6 +143,7 @@ export default function App() {
   const checkedOut = g.focus <= 0;
   const lastSpeaker = g.transcript.length ? g.transcript[g.transcript.length - 1].speakerId : null;
   const zone = visibilityZone(g.visibility);
+  const freshExtension = g.lastExtension && g.gameSeconds - g.lastExtension.at < 21;
 
   return (
     <div className="min-h-screen bg-gray-900 font-sans text-gray-100 flex flex-col">
@@ -154,7 +158,17 @@ export default function App() {
             <div className={`font-mono text-lg font-bold tabular-nums ${overtime ? "text-red-400" : ""}`}>
               {fmtClock(g.gameSeconds)} <span className="text-gray-500 text-sm font-normal">/ 30:00 scheduled</span>
             </div>
-            {overtime && <div className="text-xs text-red-400">this meeting should have ended</div>}
+            {freshExtension && (
+              <div className="text-xs font-bold text-amber-400 animate-pulse">
+                +{fmtClock(g.lastExtension.amount)} · {CAST[g.lastExtension.by].name}
+              </div>
+            )}
+            {!freshExtension && g.meetingEnd > SCHEDULED_END && (
+              <div className="text-xs text-amber-500">now ending ~{fmtClock(g.meetingEnd)}</div>
+            )}
+            {!freshExtension && g.meetingEnd <= SCHEDULED_END && overtime && (
+              <div className="text-xs text-red-400">this meeting should have ended</div>
+            )}
           </div>
         </div>
       </div>
@@ -170,7 +184,10 @@ export default function App() {
               }`}
             >
               <div className="text-2xl leading-none mb-1">{c.emoji}</div>
-              <div className="text-[11px] font-semibold truncate">{c.name}</div>
+              <div className="text-[11px] font-semibold truncate">
+                {c.name}
+                {(g.resentment[id] || 0) > 0 && " 😠"}
+              </div>
               <div className="text-[10px] text-gray-500 truncate">{id === "mute" ? "🔇 " : ""}{c.role}</div>
             </div>
           ))}
@@ -257,7 +274,7 @@ export default function App() {
             <div className="bg-gray-950/60 rounded-xl border border-gray-800 p-4">
               <div className="flex justify-between items-baseline">
                 <span className="text-sm font-medium text-gray-400">Action items</span>
-                <span className="font-mono font-bold text-3xl">
+                <span className={`font-mono font-bold text-3xl ${g.actionItems >= 2 ? "text-red-400" : ""}`}>
                   {g.actionItems}<span className="text-sm text-gray-500">/3</span>
                 </span>
               </div>
@@ -313,6 +330,56 @@ export default function App() {
           </div>
         </div>
       </div>
+
+      {/* Hot potato standoff modal */}
+      {g.prompt?.type === "standoff" && (
+        <div className="fixed inset-0 z-40 bg-black/70 flex items-center justify-center p-4">
+          <div className="bg-gray-900 border border-gray-700 rounded-2xl max-w-md w-full p-6 shadow-2xl">
+            <div className="text-xs font-semibold uppercase tracking-widest text-orange-400 mb-2">
+              🥔 Action item hot potato
+            </div>
+            <p className="font-semibold mb-1">Karen: "We need someone to own this."</p>
+            <p className="text-xs text-gray-500 mb-3">
+              You vs. {g.prompt.participants.map((id) => CAST[id].name).join(", ")}. Everyone is silent. The tension
+              builds. When it fills, the most visible person owns it.
+            </p>
+            <div className="h-2.5 w-full rounded-full bg-gray-800 overflow-hidden mb-4">
+              <div
+                className="h-full rounded-full bg-orange-500 transition-all duration-200"
+                style={{ width: `${g.prompt.tension}%` }}
+              />
+            </div>
+            <div className="space-y-2">
+              {g.prompt.participants.map((id) => (
+                <button
+                  key={id}
+                  onClick={() => setG((s) => deflect(s, id))}
+                  className="w-full text-left py-2 px-3 rounded-lg border border-gray-600 text-sm font-medium hover:border-gray-400 transition-all active:scale-[0.98]"
+                >
+                  "{CAST[id].name} is really close to this one."
+                  {(g.resentment[id] || 0) > 0 && <span className="text-xs text-red-400 ml-2">😠 resents you</span>}
+                </button>
+              ))}
+              <div className="flex gap-2">
+                <button
+                  onClick={() => setG(fakeCough)}
+                  disabled={g.prompt.coughUsed}
+                  className="flex-1 py-2 rounded-lg bg-gray-800 border border-gray-700 text-xs font-semibold disabled:opacity-40 transition-transform active:scale-95"
+                >
+                  🤧 Fake a cough
+                </button>
+                <button
+                  onClick={() => setG(volunteer)}
+                  className="flex-1 py-2 rounded-lg bg-orange-600 text-white text-xs font-semibold transition-transform active:scale-95"
+                >
+                  🙋 "I'll own it."
+                </button>
+              </div>
+            </div>
+            <p className="text-xs text-gray-500 mt-3">Or hold still. Someone else might crack first.</p>
+          </div>
+        </div>
+      )}
 
       {/* Called-on quiz modal */}
       {g.prompt?.type === "quiz" && (

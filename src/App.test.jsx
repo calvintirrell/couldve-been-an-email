@@ -105,10 +105,34 @@ describe("live meeting", () => {
     expect(screen.getByTestId("transcript").className).toContain("blur");
   });
 
-  it("the meeting runs into overtime past 30:00", () => {
+  it("the clock turns red past the scheduled 30:00", () => {
     join();
     tick(300_000); // 2100 game-seconds
-    expect(screen.getByText("this meeting should have ended")).toBeInTheDocument();
+    const clock = screen.getByText("/ 30:00 scheduled").closest("div");
+    expect(clock.className).toContain("text-red-400");
+  });
+
+  it("coworkers add time and the clock announces the new end", () => {
+    join();
+    let found = false;
+    for (let i = 0; i < 400 && !found; i++) {
+      tick(250);
+      found = !!screen.queryByText(/now ending ~|\+\d+:\d+ ·/);
+    }
+    expect(found).toBe(true);
+  });
+
+  it("a hot potato standoff triggers, and volunteering takes the item", () => {
+    join();
+    let found = false;
+    for (let i = 0; i < 800 && !found; i++) {
+      tick(250);
+      found = !!screen.queryByText(/hot potato/i);
+    }
+    expect(found).toBe(true);
+    fireEvent.click(screen.getByRole("button", { name: /I'll own it/ }));
+    expect(screen.queryByText(/hot potato/i)).not.toBeInTheDocument();
+    expect(stat("Action items")).toBe(1);
   });
 
   it("a nod prompt appears and nodding resolves it", () => {

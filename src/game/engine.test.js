@@ -9,6 +9,9 @@ import {
   breakingUp,
   takeOffline,
   hardStop,
+  fakeCough,
+  deflect,
+  volunteer,
   onCooldown,
   fmtClock,
   visibilityZone,
@@ -249,6 +252,149 @@ describe("called-on quizzes", () => {
     expect(n.breakingUpUses).toBe(1);
     const spent = { ...n, breakingUpUses: 2 };
     expect(breakingUp(spent)).toBe(spent);
+  });
+});
+
+// state with every scheduler parked so only the thing under test fires
+const parked = (over = {}) => ({
+  ...createGame(),
+  nextLineAt: 1e9,
+  nextNodAt: 1e9,
+  nextQuizAt: 1e9,
+  nextExtensionAt: 1e9,
+  nextStandoffAt: 1e9,
+  ...over,
+});
+
+const standoffPrompt = (over = {}) => ({
+  type: "standoff",
+  participants: ["greg", "brad"],
+  coworkerPulls: { greg: 40, brad: 30 },
+  yourPull: 50,
+  tension: 10,
+  coughUsed: false,
+  deflectedBack: [],
+  ...over,
+});
+
+describe("the clock is a liar", () => {
+  it("a quick question always adds four minutes", () => {
+    const n = tick(parked({ gameSeconds: 329, nextExtensionAt: 330 }), 1, r05);
+    expect(n.meetingEnd).toBe(SCHEDULED_END + 240);
+    expect(n.stats.minutesAdded).toBe(4);
+    expect(n.lastExtension.amount).toBe(240);
+    expect(n.transcript.some((l) => l.text.toLowerCase().includes("quick question"))).toBe(true);
+  });
+
+  it("diane strikes as the meeting is about to end, twice max", () => {
+    const n = tick(parked({ gameSeconds: 1760 }), 1, r05);
+    expect(n.meetingEnd).toBe(SCHEDULED_END + 360);
+    expect(n.dianeStrikes).toBe(1);
+    expect(n.transcript.some((l) => l.speakerId === "diane")).toBe(true);
+    const spent = tick(parked({ gameSeconds: 1760, dianeStrikes: 2 }), 1, r05);
+    expect(spent.meetingEnd).toBe(SCHEDULED_END);
+  });
+
+  it("the rambler's context anchor quietly adds two minutes", () => {
+    const n = tick(parked({ gameSeconds: 479, anchorIdx: 2, nextLineAt: 480 }), 1, r05);
+    expect(n.meetingEnd).toBe(SCHEDULED_END + 120);
+  });
+
+  it("a hard stop blocks all extensions", () => {
+    const n = tick(parked({ gameSeconds: 1760, hardStopUsed: true }), 1, r05);
+    expect(n.meetingEnd).toBe(SCHEDULED_END);
+    expect(n.stats.extensionsBlocked).toBe(1);
+    expect(n.transcript.some((l) => l.text.includes("hard stop"))).toBe(true);
+  });
+});
+
+describe("hot potato standoff", () => {
+  it("spawns with participants and a boss opener", () => {
+    const n = tick(parked({ gameSeconds: 419, nextStandoffAt: 420 }), 1, r05);
+    expect(n.prompt?.type).toBe("standoff");
+    expect(n.prompt.participants.length).toBeGreaterThanOrEqual(2);
+    expect(n.transcript.some((l) => l.speakerId === "boss")).toBe(true);
+  });
+
+  it("when tension fills, the most visible person gets it", () => {
+    const n = tick(parked({ gameSeconds: 500, prompt: standoffPrompt({ tension: 99, yourPull: 80 }) }), 1, r05);
+    expect(n.prompt).toBeNull();
+    expect(n.actionItems).toBe(1);
+    expect(n.transcript.some((l) => l.text.includes("That was you"))).toBe(true);
+  });
+
+  it("a low profile dodges the assignment", () => {
+    const n = tick(parked({ gameSeconds: 500, prompt: standoffPrompt({ tension: 99, yourPull: 10 }) }), 1, r05);
+    expect(n.prompt).toBeNull();
+    expect(n.actionItems).toBe(0);
+    expect(n.stats.itemsDodged).toBe(1);
+  });
+
+  it("a coworker can crack under the tension", () => {
+    const n = tick(parked({ gameSeconds: 500, prompt: standoffPrompt() }), 0.1, () => 0);
+    expect(n.prompt).toBeNull();
+    expect(n.stats.itemsDodged).toBe(1);
+    expect(n.transcript.some((l) => l.text.includes("first pass"))).toBe(true);
+  });
+
+  it("a fake cough lowers your pull, once per standoff", () => {
+    const s = parked({ gameSeconds: 500, prompt: standoffPrompt() });
+    const n = fakeCough(s);
+    expect(n.prompt.yourPull).toBe(38);
+    expect(n.prompt.coughUsed).toBe(true);
+    expect(fakeCough(n)).toBe(n);
+  });
+
+  it("deflecting works but builds resentment", () => {
+    const s = parked({ gameSeconds: 500, prompt: standoffPrompt() });
+    const n = deflect(s, "greg", r05); // 0.5 < 0.7 → greg takes it
+    expect(n.prompt).toBeNull();
+    expect(n.resentment.greg).toBe(1);
+    expect(n.stats.itemsDodged).toBe(1);
+  });
+
+  it("resentful coworkers bounce the deflection back", () => {
+    const s = parked({ gameSeconds: 500, resentment: { greg: 2 }, prompt: standoffPrompt() });
+    const n = deflect(s, "greg", r05); // 0.5 ≥ 0.7 − 0.4 → bounce
+    expect(n.prompt).not.toBeNull();
+    expect(n.prompt.yourPull).toBe(68);
+    expect(n.resentment.greg).toBe(3);
+  });
+
+  it("resentful coworkers deflect back mid-standoff instead of cracking", () => {
+    const s = parked({
+      gameSeconds: 500,
+      resentment: { greg: 1 },
+      prompt: standoffPrompt({ participants: ["greg"], coworkerPulls: { greg: 40 } }),
+    });
+    const n = tick(s, 0.1, () => 0);
+    expect(n.prompt.yourPull).toBe(65);
+    expect(n.prompt.deflectedBack).toContain("greg");
+  });
+
+  it("volunteering takes the item but restores comfortable visibility", () => {
+    const s = parked({ gameSeconds: 500, visibility: 90, prompt: standoffPrompt() });
+    const n = volunteer(s);
+    expect(n.actionItems).toBe(1);
+    expect(n.visibility).toBe(50);
+    expect(n.stats.volunteered).toBe(1);
+    expect(n.prompt).toBeNull();
+  });
+});
+
+describe("the mute assignment", () => {
+  it("can strike while your camera is off and checked out", () => {
+    const s = parked({ gameSeconds: 700, cameraOn: false, offStreak: 70 });
+    const n = tick(s, 0.25, () => 0);
+    expect(n.actionItems).toBe(1);
+    expect(n.muteAssigned).toBe(true);
+    expect(n.transcript.some((l) => l.text.includes("camera was off"))).toBe(true);
+    expect(tick(n, 0.25, () => 0).actionItems).toBe(1); // once per game
+  });
+
+  it("never strikes with the camera on", () => {
+    const n = tick(parked({ gameSeconds: 700, offStreak: 999 }), 0.25, () => 0);
+    expect(n.actionItems).toBe(0);
   });
 });
 
