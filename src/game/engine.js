@@ -72,6 +72,7 @@ export function createGame() {
     nextQuizAt: 240,
     nextExtensionAt: 330,
     nextStandoffAt: 420,
+    quickQuestions: 0,
     dianeStrikes: 0,
     resentment: {}, // coworkerId -> level; they remember deflections
     muteAssigned: false,
@@ -122,10 +123,12 @@ function emitLine(s, rand) {
   const anchor = ANCHORS[s.anchorIdx];
   let speakerId, text;
   let muted = false;
+  let emittedAnchor = false;
   if (anchor && s.gameSeconds >= anchor.at) {
     speakerId = anchor.speaker;
     text = anchor.text;
     s.anchorIdx += 1;
+    emittedAnchor = true;
   } else {
     const beat = currentBeat(s.gameSeconds);
     speakerId = pickWeighted(beat.weights, rand);
@@ -136,8 +139,8 @@ function emitLine(s, rand) {
   if (garbled) text = pick(GARBLE, rand);
   pushLine(s, { speakerId, text, muted, garbled });
   s.nextLineAt = s.gameSeconds + 8 + rand() * 8;
-  // Dave giving "context" quietly costs everyone two minutes
-  if (anchor && speakerId === "rambler") extend(s, 120, "rambler");
+  // Dave giving "context" (a scripted anchor) quietly costs everyone two minutes
+  if (emittedAnchor && speakerId === "rambler") extend(s, 120, "rambler");
 }
 
 // ---------- THE CLOCK IS A LIAR ----------
@@ -161,11 +164,16 @@ function maybeExtend(s, rand) {
     extend(s, 360, "diane");
     return;
   }
-  if (s.gameSeconds >= s.nextExtensionAt && s.gameSeconds < s.meetingEnd - 120) {
+  if (
+    s.quickQuestions < 2 &&
+    s.gameSeconds >= s.nextExtensionAt &&
+    s.gameSeconds < s.meetingEnd - 120
+  ) {
+    s.quickQuestions += 1;
     const by = pick(["greg", "brad", "rambler"], rand);
     pushLine(s, { speakerId: by, text: pick(QUICK_QUESTIONS, rand), muted: false, garbled: s.focus <= 0 });
     extend(s, 240, by);
-    s.nextExtensionAt = s.gameSeconds + 300 + rand() * 180;
+    s.nextExtensionAt = s.gameSeconds + 380 + rand() * 220;
   }
 }
 
@@ -281,7 +289,7 @@ function spawnStandoff(s, rand) {
     coughUsed: false,
     deflectedBack: [],
   };
-  s.nextStandoffAt = s.gameSeconds + 350 + rand() * 150;
+  s.nextStandoffAt = s.gameSeconds + 500 + rand() * 220;
 }
 
 function assignToYou(s) {
@@ -328,8 +336,8 @@ function tickStandoff(s, dt, rand) {
 
 // One horrifying event: assigned an action item while your camera is off.
 function maybeMuteAssign(s, dt, rand) {
-  if (s.muteAssigned || s.cameraOn || s.offStreak < 60 || s.gameSeconds < 600) return;
-  if (rand() < 0.0035 * dt) {
+  if (s.muteAssigned || s.cameraOn || s.offStreak < 90 || s.gameSeconds < 600) return;
+  if (rand() < 0.0012 * dt) {
     s.muteAssigned = true;
     s.actionItems += 1;
     pushLine(s, {

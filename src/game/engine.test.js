@@ -161,6 +161,21 @@ describe("transcript engine", () => {
   });
 });
 
+describe("content decks", () => {
+  it("every character has a deep, unique filler deck", async () => {
+    const { FILLER, GARBLE, BAD_NEWS, WRONG_ANSWERS, GARBLED_OPTIONS, QUICK_QUESTIONS, ONE_MORE_THINGS, HOT_POTATO_OPENERS } =
+      await import("./content.js");
+    for (const [id, deck] of Object.entries(FILLER)) {
+      expect(deck.length, `FILLER.${id}`).toBeGreaterThanOrEqual(8);
+      expect(new Set(deck).size, `FILLER.${id} unique`).toBe(deck.length);
+    }
+    for (const [name, deck] of Object.entries({ GARBLE, BAD_NEWS, WRONG_ANSWERS, GARBLED_OPTIONS, QUICK_QUESTIONS, ONE_MORE_THINGS, HOT_POTATO_OPENERS })) {
+      expect(deck.length, name).toBeGreaterThanOrEqual(5);
+      expect(new Set(deck).size, `${name} unique`).toBe(deck.length);
+    }
+  });
+});
+
 describe("nod QTEs", () => {
   it("spawns a nod prompt after the opening minute", () => {
     let s = createGame();
@@ -309,6 +324,20 @@ describe("the clock is a liar", () => {
     expect(n.meetingEnd).toBe(SCHEDULED_END);
     expect(n.stats.extensionsBlocked).toBe(1);
     expect(n.transcript.some((l) => l.text.includes("hard stop"))).toBe(true);
+  });
+
+  it("quick questions are capped at two per meeting", () => {
+    const n = tick(parked({ gameSeconds: 400, nextExtensionAt: 0, quickQuestions: 2 }), 1, r05);
+    expect(n.meetingEnd).toBe(SCHEDULED_END);
+    expect(n.stats.minutesAdded).toBe(0);
+  });
+
+  it("rambler filler lines do not add time — only his scripted anchors do", () => {
+    // force filler from the rambler-heavy beat while anchors remain pending
+    const s = parked({ gameSeconds: 500, anchorIdx: 3, nextLineAt: 500 });
+    const n = tick(s, 0.1, r05); // beat 'dave has context' → weighted pick lands on rambler
+    expect(n.transcript.length).toBeGreaterThan(0);
+    expect(n.meetingEnd).toBe(SCHEDULED_END);
   });
 });
 
@@ -473,7 +502,7 @@ describe("endings", () => {
 
 describe("the mute assignment", () => {
   it("can strike while your camera is off and checked out", () => {
-    const s = parked({ gameSeconds: 700, cameraOn: false, offStreak: 70 });
+    const s = parked({ gameSeconds: 700, cameraOn: false, offStreak: 100 });
     const n = tick(s, 0.25, () => 0);
     expect(n.actionItems).toBe(1);
     expect(n.muteAssigned).toBe(true);
