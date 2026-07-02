@@ -12,6 +12,9 @@ import {
   fakeCough,
   deflect,
   volunteer,
+  describeEnding,
+  gradeRun,
+  buildEmail,
   onCooldown,
   fmtClock,
   visibilityZone,
@@ -218,11 +221,12 @@ describe("called-on quizzes", () => {
     expect(n.focus).toBeCloseTo(s.focus - 8, 5);
   });
 
-  it("zero focus means garbled options and an incoherent answer", () => {
+  it("zero focus means garbled options and an incoherent answer — instant loss", () => {
     const s = tick(preQuiz({ focus: 0 }), 0.1, r05);
     expect(s.prompt.garbled).toBe(true);
     const n = answerQuiz(s, 0);
     expect(n.flags.incoherent).toBe(true);
+    expect(n.ending?.id).toBe("incoherent");
     expect(n.transcript.some((l) => l.text.includes("synergies"))).toBe(true);
   });
 
@@ -379,6 +383,91 @@ describe("hot potato standoff", () => {
     expect(n.visibility).toBe(50);
     expect(n.stats.volunteered).toBe(1);
     expect(n.prompt).toBeNull();
+  });
+});
+
+describe("endings", () => {
+  it("frozen once ended — ticks are no-ops", () => {
+    const s = { ...parked(), ending: { id: "perfect" } };
+    expect(tick(s, 1, r05)).toBe(s);
+  });
+
+  it("adjournment with zero items and mid visibility is the perfect run", () => {
+    const n = tick(parked({ gameSeconds: 1795, dianeStrikes: 2 }), 1, r05);
+    expect(n.ending?.id).toBe("perfect");
+  });
+
+  it("adjournment with items (or off-zone visibility) is a graded survival", () => {
+    const withItem = tick(parked({ gameSeconds: 1795, dianeStrikes: 2, actionItems: 1 }), 1, r05);
+    expect(withItem.ending?.id).toBe("survived");
+    const tooVisible = tick(parked({ gameSeconds: 1795, dianeStrikes: 2, visibility: 90 }), 1, r05);
+    expect(tooVisible.ending?.id).toBe("survived");
+  });
+
+  it("a third action item ends the run", () => {
+    const n = tick(parked({ gameSeconds: 500, actionItems: 3 }), 0.1, r05);
+    expect(n.ending?.id).toBe("overloaded");
+  });
+
+  it("bottomed-out visibility triggers the recap quiz", () => {
+    const s = parked({ visibility: 0.05, cameraOn: false, gameSeconds: 500, transcript: [line()] });
+    const n = tick(s, 0.25, r05);
+    expect(n.prompt?.type).toBe("quiz");
+    expect(n.prompt.recap).toBe(true);
+    expect(n.transcript.some((l) => l.text.includes("recap what we just discussed"))).toBe(true);
+  });
+
+  it("passing the recap barely saves you", () => {
+    const s = parked({ visibility: 0.05, cameraOn: false, gameSeconds: 500, transcript: [line()] });
+    const quizzed = tick(s, 0.25, r05);
+    const n = answerQuiz(quizzed, quizzed.prompt.options.findIndex((o) => o.correct));
+    expect(n.ending).toBeNull();
+    expect(n.visibility).toBe(20);
+  });
+
+  it("failing the recap is the lurking loss", () => {
+    const s = parked({ visibility: 0.05, cameraOn: false, gameSeconds: 500, transcript: [line()] });
+    const quizzed = tick(s, 0.25, r05);
+    const wrong = answerQuiz(quizzed, quizzed.prompt.options.findIndex((o) => !o.correct));
+    expect(wrong.ending?.id).toBe("exposed");
+    const timedOut = tick(tick(s, 0.25, r05), 7, r05);
+    expect(timedOut.ending?.id).toBe("exposed");
+  });
+
+  it("'good point' cannot answer a recap", () => {
+    const s = parked({ visibility: 0.05, cameraOn: false, gameSeconds: 500, transcript: [line()] });
+    const quizzed = tick(s, 0.25, r05);
+    expect(goodPoint(quizzed)).toBe(quizzed);
+  });
+
+  it("describes every ending", () => {
+    for (const id of ["perfect", "survived", "overloaded", "exposed", "incoherent"]) {
+      const meta = describeEnding({ ...createGame(), ending: { id } });
+      expect(meta.title).toBeTruthy();
+      expect(meta.blurb).toBeTruthy();
+      expect(typeof meta.won).toBe("boolean");
+    }
+  });
+
+  it("grades the run", () => {
+    expect(gradeRun(createGame())).toBe("A");
+    const rough = {
+      ...createGame(),
+      actionItems: 2,
+      visibility: 90,
+      stats: { ...createGame().stats, badNods: 3, quizWrong: 3, words: 60 },
+    };
+    expect(gradeRun(rough)).toBe("D");
+  });
+
+  it("generates the two-sentence follow-up email", () => {
+    const email = buildEmail({ ...createGame(), gameSeconds: 2040, actionItems: 2 });
+    expect(email.subject).toBe("Recap: Q3 Alignment Sync");
+    expect(email.body).toContain("2 of them have your name");
+    expect(email.footer).toContain("This email took 40 seconds to read.");
+    expect(email.footer).toContain("34 minutes");
+    const clean = buildEmail({ ...createGame(), gameSeconds: 1800, actionItems: 0 });
+    expect(clean.body).toContain("none to you, somehow");
   });
 });
 

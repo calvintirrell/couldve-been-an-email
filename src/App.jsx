@@ -13,6 +13,8 @@ import {
   fakeCough,
   deflect,
   volunteer,
+  describeEnding,
+  buildEmail,
   onCooldown,
   cooldownLeftReal,
   fmtClock,
@@ -133,6 +135,71 @@ export default function App() {
             </div>
             <p className="text-xs text-gray-400 mt-4 text-center">Goal: reach adjournment with zero action items and eleven words spoken.</p>
           </div>
+        </div>
+      </div>
+    );
+  }
+
+  // ---------- ENDING ----------
+  if (g.ending) {
+    const meta = describeEnding(g);
+    const email = buildEmail(g);
+    return (
+      <div className="min-h-screen bg-gray-100 flex items-center justify-center p-6 font-sans text-gray-900">
+        <div className="max-w-xl w-full bg-white rounded-2xl border border-gray-200 shadow-sm p-8">
+          <div className="text-xs font-semibold uppercase tracking-widest text-gray-400 mb-2">
+            {meta.won ? "Meeting adjourned" : "Final outcome"}
+          </div>
+          <h1 className="text-3xl font-bold tracking-tight mb-3">{meta.title}</h1>
+          <p className="text-gray-600 mb-6">{meta.blurb}</p>
+
+          <div className="rounded-xl border border-gray-200 bg-gray-50 overflow-hidden mb-6">
+            <div className="px-4 py-3 border-b border-gray-200 bg-white">
+              <div className="text-xs text-gray-500">From: Karen (The Boss) · To: All (7)</div>
+              <div className="text-sm font-semibold mt-0.5">{email.subject}</div>
+            </div>
+            <div className="p-4">
+              <p className="text-sm text-gray-800">{email.body}</p>
+              <p className="text-xs text-gray-400 italic mt-3 pt-3 border-t border-gray-200">{email.footer}</p>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-3 gap-3 text-center mb-6">
+            <div className="rounded-lg bg-gray-50 border border-gray-200 p-3">
+              <div className="text-xs text-gray-500">Minutes survived</div>
+              <div className="font-mono font-semibold">{Math.round(g.gameSeconds / 60)}</div>
+            </div>
+            <div className="rounded-lg bg-gray-50 border border-gray-200 p-3">
+              <div className="text-xs text-gray-500">Minutes added</div>
+              <div className="font-mono font-semibold">{Math.round(g.stats.minutesAdded)}</div>
+            </div>
+            <div className="rounded-lg bg-gray-50 border border-gray-200 p-3">
+              <div className="text-xs text-gray-500">Words spoken</div>
+              <div className="font-mono font-semibold">{g.stats.words}</div>
+            </div>
+            <div className="rounded-lg bg-gray-50 border border-gray-200 p-3">
+              <div className="text-xs text-gray-500">Nods</div>
+              <div className="font-mono font-semibold">
+                {g.stats.nods}
+                {g.stats.badNods > 0 && <span className="text-xs text-red-500"> ({g.stats.badNods} regrettable)</span>}
+              </div>
+            </div>
+            <div className="rounded-lg bg-gray-50 border border-gray-200 p-3">
+              <div className="text-xs text-gray-500">Items dodged</div>
+              <div className="font-mono font-semibold">{g.stats.itemsDodged}</div>
+            </div>
+            <div className="rounded-lg bg-gray-50 border border-gray-200 p-3">
+              <div className="text-xs text-gray-500">Items taken</div>
+              <div className="font-mono font-semibold">{g.actionItems}</div>
+            </div>
+          </div>
+
+          <button
+            onClick={leave}
+            className="w-full py-3 rounded-xl bg-gray-900 text-white font-semibold text-lg transition-transform active:scale-95"
+          >
+            There's another occurrence next week →
+          </button>
         </div>
       </div>
     );
@@ -385,14 +452,20 @@ export default function App() {
       {g.prompt?.type === "quiz" && (
         <div className="fixed inset-0 z-40 bg-black/70 flex items-center justify-center p-4">
           <div className="bg-gray-900 border border-gray-700 rounded-2xl max-w-md w-full p-6 shadow-2xl">
-            <div className="text-xs font-semibold uppercase tracking-widest text-amber-400 mb-2">
-              🎤 You've been called on
+            <div className={`text-xs font-semibold uppercase tracking-widest mb-2 ${g.prompt.recap ? "text-red-400" : "text-amber-400"}`}>
+              {g.prompt.recap ? "👁️ Karen noticed" : "🎤 You've been called on"}
             </div>
-            <p className="font-semibold mb-1">Karen: "I'd love your take here. Thoughts?"</p>
+            <p className="font-semibold mb-1">
+              {g.prompt.recap
+                ? 'Karen: "Sorry — I want to make sure everyone\'s engaged. Can you recap what we just discussed?"'
+                : 'Karen: "I\'d love your take here. Thoughts?"'}
+            </p>
             <p className="text-xs text-gray-500 mb-2">
-              {g.prompt.garbled
-                ? "You have no idea what was just said. These options are guesses."
-                : "It was about something in the last 30 seconds. Hopefully you were reading."}
+              {g.prompt.recap
+                ? "Your visibility bottomed out. Get this wrong and it's over."
+                : g.prompt.garbled
+                  ? "You have no idea what was just said. These options are guesses."
+                  : "It was about something in the last 30 seconds. Hopefully you were reading."}
             </p>
             <PromptTimer expiresAt={g.prompt.expiresAt} now={g.gameSeconds} window={QUIZ_WINDOW} />
             <div className="space-y-2 mt-4">
@@ -409,7 +482,7 @@ export default function App() {
             <div className="flex gap-2 mt-3 pt-3 border-t border-gray-800">
               <button
                 onClick={() => setG(goodPoint)}
-                disabled={onCooldown(g, "goodPoint")}
+                disabled={g.prompt.recap || onCooldown(g, "goodPoint")}
                 className="flex-1 py-2 rounded-lg bg-gray-800 border border-gray-700 text-xs font-semibold disabled:opacity-40 transition-transform active:scale-95"
               >
                 "Good point."

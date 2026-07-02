@@ -56,6 +56,7 @@ export const cooldownLeftReal = (s, id) =>
 
 export function createGame() {
   return {
+    ending: null, // {id: 'perfect'|'survived'|'overloaded'|'exposed'|'incoherent'}
     gameSeconds: 0,
     meetingEnd: SCHEDULED_END,
     focus: 100,
@@ -196,12 +197,10 @@ function findQuizSource(s) {
   return null;
 }
 
-function spawnQuiz(s, rand) {
+function makeQuizOptions(s, rand) {
   const source = findQuizSource(s);
-  if (!source) return;
+  if (!source) return null;
   const garbled = source.garbled || s.focus <= 0;
-  pushLine(s, { speakerId: "boss", text: "I'd love your take here. Thoughts?", muted: false, garbled: false });
-
   let options;
   const correctIdx = Math.floor(rand() * 3) % 3;
   if (garbled) {
@@ -222,16 +221,41 @@ function spawnQuiz(s, rand) {
       correct: i === correctIdx,
     }));
   }
-  s.prompt = { type: "quiz", options, garbled, expiresAt: s.gameSeconds + QUIZ_WINDOW };
+  return { options, garbled };
+}
+
+function spawnQuiz(s, rand) {
+  const built = makeQuizOptions(s, rand);
+  if (!built) return;
+  pushLine(s, { speakerId: "boss", text: "I'd love your take here. Thoughts?", muted: false, garbled: false });
+  s.prompt = { type: "quiz", ...built, expiresAt: s.gameSeconds + QUIZ_WINDOW };
   s.nextQuizAt = s.gameSeconds + 200 + rand() * 120;
 }
 
+// Visibility bottomed out: the boss noticed you've said nothing. Instant hard quiz — fail and you're done.
+function spawnRecap(s, rand) {
+  const built = makeQuizOptions(s, rand);
+  if (!built) return;
+  pushLine(s, {
+    speakerId: "boss",
+    text: "Sorry — I want to make sure everyone's engaged. Can you recap what we just discussed?",
+    muted: false,
+    garbled: false,
+  });
+  s.prompt = { type: "quiz", recap: true, ...built, expiresAt: s.gameSeconds + QUIZ_WINDOW };
+}
+
 function expirePrompt(s) {
-  if (s.prompt.type === "quiz") {
-    s.visibility = clamp(s.visibility - 9, 0, 100);
-    sys(s, "You froze. The silence developed a personality.");
-  }
+  const p = s.prompt;
   s.prompt = null;
+  if (p.type !== "quiz") return;
+  if (p.recap) {
+    sys(s, "You blinked. Everyone watched you buffer.");
+    s.ending = { id: "exposed" };
+    return;
+  }
+  s.visibility = clamp(s.visibility - 9, 0, 100);
+  sys(s, "You froze. The silence developed a personality.");
 }
 
 // ---------- HOT POTATO ----------
@@ -320,7 +344,10 @@ function maybeMuteAssign(s, dt, rand) {
 
 // ---------- TICK ----------
 
+const withEnding = (s, id) => ({ ...s, ending: { id }, prompt: null });
+
 export function tick(s, dtReal, rand = Math.random) {
+  if (s.ending) return s;
   const dt = dtReal * SPEED;
   const beat = currentBeat(s.gameSeconds);
   const drainMult = s.gameSeconds < s.calmUntil ? 1 : beat.drainMult;
@@ -341,10 +368,17 @@ export function tick(s, dtReal, rand = Math.random) {
   maybeMuteAssign(n, dt, rand);
   if (n.prompt?.type === "standoff") tickStandoff(n, dt, rand);
   if (n.prompt && n.gameSeconds >= n.prompt.expiresAt) expirePrompt(n);
+  if (n.ending) return n;
+  if (n.actionItems >= 3) return withEnding(n, "overloaded");
+  if (n.visibility <= 0 && !n.prompt?.recap) spawnRecap(n, rand);
   if (!n.prompt && n.gameSeconds >= 30) {
     if (n.gameSeconds >= n.nextNodAt) spawnNod(n, rand);
     else if (n.gameSeconds >= n.nextQuizAt) spawnQuiz(n, rand);
     else if (n.gameSeconds >= n.nextStandoffAt && n.gameSeconds >= 300) spawnStandoff(n, rand);
+  }
+  if (n.gameSeconds >= n.meetingEnd) {
+    const perfect = n.actionItems === 0 && visibilityZone(n.visibility) === "mid";
+    return withEnding(n, perfect ? "perfect" : "survived");
   }
   return n;
 }
@@ -374,18 +408,26 @@ export function answerQuiz(s, idx) {
     n.flags = { ...n.flags, incoherent: true };
     n.stats.quizWrong += 1;
     n.stats.words += 5;
-    n.visibility = clamp(n.visibility + 20, 0, 100);
     sys(n, '"Yes, totally, the synergies," you say. It was a yes/no question.');
-    return n;
+    return withEnding(n, "incoherent");
   }
   if (s.prompt.options[idx]?.correct) {
     n.stats.quizRight += 1;
     n.stats.words += 12;
-    n.visibility = clamp(n.visibility + 6, 0, 100);
-    sys(n, "Karen nods. 'Exactly.' A solid contribution. People noticed.");
+    if (s.prompt.recap) {
+      n.visibility = 20;
+      sys(n, "You recap it. Barely. Karen moves on. That was too close.");
+    } else {
+      n.visibility = clamp(n.visibility + 6, 0, 100);
+      sys(n, "Karen nods. 'Exactly.' A solid contribution. People noticed.");
+    }
   } else {
     n.stats.quizWrong += 1;
     n.stats.words += 10;
+    if (s.prompt.recap) {
+      sys(n, "That was not what was discussed. Karen's smile does not reach her eyes.");
+      return withEnding(n, "exposed");
+    }
     n.visibility = clamp(n.visibility + 10, 0, 100);
     n.focus = clamp(n.focus - 8, 0, 100);
     sys(n, "Karen pauses. 'That's… not quite where we were.' Everyone saw.");
@@ -394,7 +436,7 @@ export function answerQuiz(s, idx) {
 }
 
 export function goodPoint(s) {
-  if (s.prompt?.type !== "quiz" || onCooldown(s, "goodPoint")) return s;
+  if (s.prompt?.type !== "quiz" || s.prompt.recap || onCooldown(s, "goodPoint")) return s;
   const n = { ...s, prompt: null, stats: { ...s.stats } };
   n.stats.quizMeh += 1;
   n.stats.words += 2;
@@ -477,4 +519,63 @@ export function volunteer(s) {
   n.visibility = 50; // the big cushion: comfortably mid for a while
   sys(n, "'I'll own it.' Karen beams. You are, briefly, beyond reproach.");
   return n;
+}
+
+// ---------- ENDINGS ----------
+
+export function gradeRun(s) {
+  let score = 100 - s.actionItems * 25 - s.stats.badNods * 8 - s.stats.quizWrong * 10;
+  if (visibilityZone(s.visibility) !== "mid") score -= 15;
+  if (s.stats.words > 40) score -= 10;
+  return score >= 85 ? "A" : score >= 65 ? "B" : score >= 45 ? "C" : "D";
+}
+
+export function describeEnding(s) {
+  const mins = Math.max(1, Math.round(s.gameSeconds / 60));
+  const words = s.stats.words;
+  const items = s.actionItems;
+  return {
+    perfect: {
+      won: true,
+      title: "Leadership Material",
+      blurb: `You said ${words} words in ${mins} minutes. Zero action items. Optimal visibility. Nobody knows what you do, and nobody ever will.`,
+    },
+    survived: {
+      won: true,
+      title: "You Survived the Sync",
+      blurb: `${mins} minutes. ${items} action item${items === 1 ? "" : "s"} followed you out. Performance grade: ${gradeRun(s)}. There is another occurrence next week.`,
+    },
+    overloaded: {
+      won: false,
+      title: "You Now Own the Q3 Roadmap",
+      blurb: "Third action item. Congratulations: you own the roadmap, the deck, and the follow-ups. The meeting ended. Your suffering did not.",
+    },
+    exposed: {
+      won: false,
+      title: "Caught Completely Lurking",
+      blurb: `"Can you recap what we just discussed?" You could not. Everyone watched. The silence is now load-bearing. There will be a follow-up meeting about engagement.`,
+    },
+    incoherent: {
+      won: false,
+      title: "Yes, Totally, The Synergies",
+      blurb: "You unmuted and said it in response to a yes/no question. The meeting paused. Someone screenshotted it. It's already in three group chats.",
+    },
+  }[s.ending.id];
+}
+
+// The title payoff: the whole meeting, two sentences.
+export function buildEmail(s) {
+  const mins = Math.max(1, Math.round(s.gameSeconds / 60));
+  const items = s.actionItems;
+  const s1 =
+    "Good sync today — we aligned on Q3 priorities, Dave added valuable context, and Brad surfaced a synergy opportunity we'll double-click on next week.";
+  const s2 =
+    items > 0
+      ? `Action items are in the notes (${items} of them ${items === 1 ? "has" : "have"} your name on ${items === 1 ? "it" : "them"}); we'll pick this up at next week's occurrence.`
+      : "Action items have been distributed (none to you, somehow); we'll pick this up at next week's occurrence.";
+  return {
+    subject: "Recap: Q3 Alignment Sync",
+    body: `${s1} ${s2}`,
+    footer: `This email took 40 seconds to read. The meeting took ${mins} minutes.`,
+  };
 }

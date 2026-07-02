@@ -97,19 +97,33 @@ describe("live meeting", () => {
     expect(stat("Visibility")).toBeLessThan(visBefore);
   });
 
-  it("hitting zero focus checks you out and blurs the feed", () => {
+  it("left unattended, the meeting eventually claims you — and generates the email", () => {
     join();
-    tick(300_000); // way past the point of no return
-    expect(stat("Focus")).toBe(0);
-    expect(screen.getByText(/you're cooked/)).toBeInTheDocument();
-    expect(screen.getByTestId("transcript").className).toContain("blur");
+    let ended = false;
+    for (let i = 0; i < 3000 && !ended; i++) {
+      tick(250);
+      ended = !!screen.queryByText(/This email took 40 seconds to read/);
+    }
+    expect(ended).toBe(true);
+    expect(screen.getByText("Recap: Q3 Alignment Sync")).toBeInTheDocument();
+    expect(screen.getByText("Minutes added")).toBeInTheDocument();
+    expect(screen.getByText("Words spoken")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /another occurrence next week/ }));
+    expect(screen.getByRole("heading", { name: "Could've Been an Email" })).toBeInTheDocument();
   });
 
-  it("the clock turns red past the scheduled 30:00", () => {
+  it("lurking with the camera off triggers the recap quiz; freezing on it is the lurking loss", () => {
     join();
-    tick(300_000); // 2100 game-seconds
-    const clock = screen.getByText("/ 30:00 scheduled").closest("div");
-    expect(clock.className).toContain("text-red-400");
+    fireEvent.click(screen.getByRole("button", { name: /Turn camera off/ }));
+    let found = false;
+    for (let i = 0; i < 400 && !found; i++) {
+      tick(250);
+      found = !!screen.queryByText(/Karen noticed/);
+    }
+    expect(found).toBe(true);
+    tick(7000); // freeze through the 6-second window
+    expect(screen.getByText("Caught Completely Lurking")).toBeInTheDocument();
+    expect(screen.getByText(/This email took 40 seconds to read/)).toBeInTheDocument();
   });
 
   it("coworkers add time and the clock announces the new end", () => {
